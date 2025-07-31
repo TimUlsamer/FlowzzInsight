@@ -300,21 +300,17 @@ def build_dataframe(products: List[ProductDetails]) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
+def scrape_all(page_size: int = 100, delay: float = 0.1) -> pd.DataFrame:
+    """Convenience wrapper returning a DataFrame with all product data."""
+    products = fetch_all_products(page_size=page_size, delay=delay)
+    enriched = enrich_products_with_likes(products, delay=delay)
+    return build_dataframe(enriched)
+
+
 def main() -> None:
-    """
-    Main entry point for the script.
-
-    Fetches all products, enriches them with likes and prints
-    two sorted tables: one by likes and one by star rating.  The
-    tables are also written to CSV files for external use.
-    """
+    """Command line interface for scraping and exporting product data."""
     print("Fetching product listing…")
-    products = fetch_all_products(page_size=100, delay=0.1)
-    print(f"Fetched {len(products)} products from listing.")
-
-    print("Retrieving likes for each product (this may take several minutes)…")
-    enriched = enrich_products_with_likes(products, delay=0.1)
-    df = build_dataframe(enriched)
+    df = scrape_all(page_size=100, delay=0.1)
 
     # Sort by likes (descending) and display
     df_by_likes = df.sort_values(by=["num_likes", "ratings_score"], ascending=[False, False])
@@ -330,6 +326,3 @@ def main() -> None:
 
     print("\nData exported to 'flowzz_products_by_likes.csv' and 'flowzz_products_by_rating.csv'.")
 
-
-if __name__ == "__main__":
-    main()
