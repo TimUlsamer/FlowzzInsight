@@ -1,68 +1,31 @@
-"""
-Flowzz Strain Scraper
-----------------------
+"""Flowzz strain scraper.
 
-This script queries the public CMS and website of the price comparison
-platform `flowzz.com` to retrieve a list of all currently available
-cannabis flower strains (“Blüten”) and extract two key metrics for each
-strain:
+This tool queries the public CMS and website of ``flowzz.com`` to gather
+statistics for every listed flower strain. Compared to the earlier
+version it offers a small command line interface, CSV/JSON export and
+prettier console tables.
 
-* **Star rating** – the average score (out of 5) that users have
-  assigned to the strain.
-* **Number of likes** – how many users have liked the strain.  This
-  figure is visible on the individual strain’s detail page.
-
-The script performs the following high‑level steps:
-
-1. **Retrieve all strain slugs via the CMS API.**  The Flowzz CMS
-   exposes a REST endpoint (`/api/strains`) which returns basic
-   information about every strain, including a URL slug.  By paging
-   through this endpoint we obtain a complete list of strains and their
-   human‑readable names.
-2. **Scrape each strain’s detail page.**  For every slug, the script
-   downloads the corresponding page (`https://flowzz.com/strain/<slug>`)
-   and looks for a JSON object embedded in the page markup.  This
-   object contains, among other things, the total number of likes
-   (`num_likes`), the average rating (`ratings_score`) and the number
-   of ratings (`ratings_count`).  We extract these values with regular
-   expressions.
-3. **Aggregate and sort.**  After collecting metrics for every strain,
-   the script prints two lists to standard output:
-   * strains sorted by descending star rating, and
-   * strains sorted by descending number of likes.
-
-Usage
------
-
-Run the script directly with Python 3:
-
-```
-python flowzz_scraper.py
-```
-
-The script will report progress to the console and may take several
-minutes to complete depending on the number of strains and network
-latency.  To be polite to Flowzz’s servers, a small delay is inserted
-between requests.  You can adjust the delay via the `REQUEST_DELAY`
-constant.
-
-Note
-----
-
-This script accesses publicly available information on flowzz.com.  It
-does **not** perform any purchases or other regulated transactions.  If
-Flowzz changes its page structure or API, the regular expressions may
-require adjustment.
+The program **does not** perform any purchases or other regulated
+transactions. It merely accesses information already visible on the
+website. Should Flowzz change its page structure, the regular
+expressions below may require adjustment.
 """
 
+import argparse
+import csv
 import json
+import logging
 import re
 import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import requests
+from tabulate import tabulate
+
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
 # A polite delay between HTTP requests (in seconds).
 REQUEST_DELAY = 0.5
@@ -113,7 +76,7 @@ def fetch_strain_list() -> List[Dict[str, str]]:
             resp = requests.get(CMS_BASE_URL, params=params, timeout=30)
             resp.raise_for_status()
         except Exception as exc:
-            print(f"[ERROR] Failed to fetch strain list on page {page}: {exc}", file=sys.stderr)
+            logging.error("Failed to fetch strain list on page %s: %s", page, exc)
             break
 
         data = resp.json()
@@ -200,7 +163,7 @@ def fetch_strain_page(slug: str) -> Optional[str]:
         resp.raise_for_status()
         return resp.text
     except Exception as exc:
-        print(f"[ERROR] Failed to fetch strain page '{slug}': {exc}", file=sys.stderr)
+        logging.error("Failed to fetch strain page '%s': %s", slug, exc)
         return None
 
 
@@ -215,7 +178,7 @@ def scrape_flowzz() -> List[StrainData]:
     for idx, entry in enumerate(strains_info, start=1):
         name = entry["name"]
         slug = entry["slug"]
-        print(f"Processing {idx}/{total}: {name} ({slug})")
+        logging.info("Processing %s/%s: %s (%s)", idx, total, name, slug)
         html = fetch_strain_page(slug)
         if not html:
             # Skip if we couldn't download the page.
@@ -237,11 +200,53 @@ def scrape_flowzz() -> List[StrainData]:
     return results
 
 
-def print_sorted_lists(strains: List[StrainData]) -> None:
+def save_to_csv(strains: List[StrainData], path: Path) -> None:
+    """Write the scraped data to a CSV file."""
+    fieldnames = [
+        "name",
+        "slug",
+        "url",
+        "ratings_score",
+        "ratings_count",
+        "num_likes",
+    ]
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for s in strains:
+            writer.writerow(
+                {
+                    "name": s.name,
+                    "slug": s.slug,
+                    "url": STRAIN_PAGE_URL.format(slug=s.slug),
+                    "ratings_score": s.ratings_score,
+                    "ratings_count": s.ratings_count,
+                    "num_likes": s.num_likes,
+                }
+            )
+
+
+def save_to_json(strains: List[StrainData], path: Path) -> None:
+    """Write the scraped data to a JSON file."""
+    data = [
+        {
+            **s.as_dict(),
+            "url": STRAIN_PAGE_URL.format(slug=s.slug),
+        }
+        for s in strains
+    ]
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def print_sorted_lists(strains: List[StrainData], limit: int = 10) -> None:
     """Print strains sorted by rating and by likes.
 
-    Strains with missing values are placed at the end of each list.  The
-    function prints a simple table for each sorting criterion.
+    Parameters
+    ----------
+    strains:
+        Collection of :class:`StrainData` objects.
+    limit:
+        Only print the top ``limit`` entries of each table.
     """
     # Sort by rating score (descending).  Use -score for proper ordering,
     # None values are treated as -1 so they sink to the bottom.
@@ -264,23 +269,46 @@ def print_sorted_lists(strains: List[StrainData]) -> None:
     )
 
     def print_table(title: str, entries: List[StrainData], metric_key: str) -> None:
-        print("\n" + title)
-        print("=" * len(title))
-        header = f"{'Rank':>4} | {'Strain':<40} | {metric_key.replace('_', ' ').title():>12}"
-        print(header)
-        print("-" * len(header))
-        for rank, strain in enumerate(entries, start=1):
+        table = []
+        for rank, strain in enumerate(entries[:limit], start=1):
             metric_value = getattr(strain, metric_key)
-            metric_str = f"{metric_value}" if metric_value is not None else "N/A"
-            print(f"{rank:>4} | {strain.name:<40} | {metric_str:>12}")
+            table.append(
+                [
+                    rank,
+                    strain.name,
+                    STRAIN_PAGE_URL.format(slug=strain.slug),
+                    metric_value if metric_value is not None else "N/A",
+                ]
+            )
+        print("\n" + title)
+        print(tabulate(table, headers=["#", "Strain", "URL", metric_key.replace("_", " ").title()], tablefmt="github"))
 
     print_table("Strains nach Sternebewertung (absteigend)", by_rating, "ratings_score")
     print_table("Strains nach Likes (absteigend)", by_likes, "num_likes")
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Scrape strain data from flowzz.com")
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        help="Write results to the given CSV file (also writes JSON with same name).",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Number of entries to show in the summary tables.",
+    )
+    args = parser.parse_args()
+
     strains = scrape_flowzz()
-    print_sorted_lists(strains)
+    print_sorted_lists(strains, limit=args.limit)
+
+    if args.output:
+        save_to_csv(strains, args.output)
+        save_to_json(strains, args.output.with_suffix(".json"))
 
 
 if __name__ == "__main__":
