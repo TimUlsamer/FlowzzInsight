@@ -1,6 +1,12 @@
 import pandas as pd
 import streamlit as st
 
+from flowzz_product_scraper import (
+    fetch_all_products,
+    enrich_products_with_likes,
+    build_dataframe,
+)
+
 CSV_PATH = "flowzz_products_by_likes.csv"  # Passe ggf. an
 
 st.set_page_config(page_title="Flowzz Produktübersicht", layout="wide")
@@ -10,7 +16,30 @@ st.title("Interaktive Übersicht: Flowzz Cannabisprodukte")
 def load_data(path):
     return pd.read_csv(path)
 
-df = load_data(CSV_PATH)
+@st.cache_data
+def fetch_selected(slugs):
+    products = fetch_all_products(slugs=slugs)
+    enriched = enrich_products_with_likes(products)
+    return build_dataframe(enriched)
+
+if "df" not in st.session_state:
+    st.session_state.df = load_data(CSV_PATH)
+
+df = st.session_state.df
+
+# -------- Auswahl der Produkte --------
+st.sidebar.header("Auswahl Produkte")
+available_slugs = df["slug"].unique().tolist()
+slug_select = st.sidebar.multiselect("Produkte (Slug)", options=available_slugs)
+slug_text = st.sidebar.text_input("Weitere Slugs, kommagetrennt")
+extra_slugs = [s.strip() for s in slug_text.split(",") if s.strip()]
+selected_slugs = list(dict.fromkeys(slug_select + extra_slugs))
+
+if st.sidebar.button("Daten neu laden") and selected_slugs:
+    with st.spinner("Lade Daten von Flowzz…"):
+        df_new = fetch_selected(selected_slugs)
+        st.session_state.df = df_new
+        df = df_new
 
 # -------- Filter in der Sidebar --------
 st.sidebar.header("Filter")

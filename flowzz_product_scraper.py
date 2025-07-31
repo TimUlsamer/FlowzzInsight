@@ -124,7 +124,11 @@ def fetch_listing(session: requests.Session, page: int, page_size: int = 100) ->
     return response.json()
 
 
-def fetch_all_products(page_size: int = 100, delay: float = 0.5) -> List[ProductSummary]:
+def fetch_all_products(
+    page_size: int = 100,
+    delay: float = 0.5,
+    slugs: Optional[List[str]] = None,
+) -> List[ProductSummary]:
     """
     Retrieve all flower products from Flowzz.
 
@@ -142,12 +146,16 @@ def fetch_all_products(page_size: int = 100, delay: float = 0.5) -> List[Product
     delay: float
         Delay in seconds between successive HTTP requests.
 
+    slugs: list[str], optional
+        If provided, return only products whose slugs match this list.
+
     Returns
     -------
     List[ProductSummary]
-        A list of ProductSummary objects representing all products.
+        A list of ProductSummary objects representing the products.
     """
     session = requests.Session()
+    slug_set = set(slugs) if slugs else None
     # Fetch the first page to determine total pages
     first_page = fetch_listing(session, 1, page_size=page_size)
     data = first_page.get("data", {})
@@ -157,28 +165,10 @@ def fetch_all_products(page_size: int = 100, delay: float = 0.5) -> List[Product
     total_pages = pagination.get("pageCount", 1)
 
     products: List[ProductSummary] = []
-    for item in products_raw:
-        products.append(
-            ProductSummary(
-                id=item.get("id"),
-                name=item.get("name"),
-                thc=item.get("thc"),
-                cbd=item.get("cbd"),
-                ratings_score=item.get("ratings_score"),
-                ratings_count=item.get("ratings_count"),
-                min_price=item.get("min_price"),
-                max_price=item.get("max_price"),
-                slug=item.get("url"),
-            )
-        )
 
-    # Loop through remaining pages
-    for page in range(2, total_pages + 1):
-        time.sleep(delay)
-        resp = fetch_listing(session, page, page_size=page_size)
-        data = resp.get("data", {})
-        items = data.get("data", [])
-        for item in items:
+    def maybe_add(item: dict) -> None:
+        slug = item.get("url")
+        if slug_set is None or slug in slug_set:
             products.append(
                 ProductSummary(
                     id=item.get("id"),
@@ -189,9 +179,28 @@ def fetch_all_products(page_size: int = 100, delay: float = 0.5) -> List[Product
                     ratings_count=item.get("ratings_count"),
                     min_price=item.get("min_price"),
                     max_price=item.get("max_price"),
-                    slug=item.get("url"),
+                    slug=slug,
                 )
             )
+
+    for item in products_raw:
+        maybe_add(item)
+
+    if slug_set and len(products) == len(slug_set):
+        return products
+
+    # Loop through remaining pages
+    for page in range(2, total_pages + 1):
+        time.sleep(delay)
+        resp = fetch_listing(session, page, page_size=page_size)
+        data = resp.get("data", {})
+        items = data.get("data", [])
+        for item in items:
+            maybe_add(item)
+            if slug_set and len(products) == len(slug_set):
+                break
+        if slug_set and len(products) == len(slug_set):
+            break
 
     return products
 
@@ -300,16 +309,16 @@ def build_dataframe(products: List[ProductDetails]) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
-def main() -> None:
+def main(slugs: Optional[List[str]] = None) -> None:
     """
     Main entry point for the script.
 
-    Fetches all products, enriches them with likes and prints
-    two sorted tables: one by likes and one by star rating.  The
-    tables are also written to CSV files for external use.
+    Fetches product information from Flowzz, enriches the data with
+    the number of likes and prints two sorted tables. When ``slugs``
+    is provided, only products matching those slugs are processed.
     """
     print("Fetching product listing…")
-    products = fetch_all_products(page_size=100, delay=0.1)
+    products = fetch_all_products(page_size=100, delay=0.1, slugs=slugs)
     print(f"Fetched {len(products)} products from listing.")
 
     print("Retrieving likes for each product (this may take several minutes)…")
@@ -332,4 +341,13 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Fetch Flowzz product data")
+    parser.add_argument(
+        "--slugs",
+        help="Comma-separated list of product slugs to fetch",
+    )
+    args = parser.parse_args()
+    slug_list = [s.strip() for s in args.slugs.split(",") if s.strip()] if args.slugs else None
+    main(slug_list)
