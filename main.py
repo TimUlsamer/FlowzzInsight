@@ -55,16 +55,22 @@ Flowzz changes its page structure or API, the regular expressions may
 require adjustment.
 """
 
+import argparse
+import csv
 import json
 import re
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
+from tabulate import tabulate
+from tqdm import tqdm
+
 import requests
 
-# A polite delay between HTTP requests (in seconds).
+# A polite delay between HTTP requests (in seconds). Can be overridden via CLI.
 REQUEST_DELAY = 0.5
 
 # Base URLs used by the scraper.
@@ -81,6 +87,11 @@ class StrainData:
     num_likes: Optional[int]
     ratings_score: Optional[float]
     ratings_count: Optional[int]
+
+    @property
+    def url(self) -> str:
+        """Return the full Flowzz URL for this strain."""
+        return STRAIN_PAGE_URL.format(slug=self.slug)
 
     def as_dict(self) -> Dict[str, Optional[str]]:
         """Return a dict representation of the strain for easy sorting."""
@@ -180,6 +191,38 @@ def extract_metrics_from_html(html: str) -> Dict[str, Optional[float]]:
     return metrics
 
 
+def save_to_csv(strains: List[StrainData], path: str) -> None:
+    """Write the scraped data to a CSV file."""
+    fieldnames = [
+        "name",
+        "slug",
+        "url",
+        "num_likes",
+        "ratings_score",
+        "ratings_count",
+    ]
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for s in strains:
+            writer.writerow(
+                {
+                    "name": s.name,
+                    "slug": s.slug,
+                    "url": s.url,
+                    "num_likes": s.num_likes,
+                    "ratings_score": s.ratings_score,
+                    "ratings_count": s.ratings_count,
+                }
+            )
+
+
+def save_to_json(strains: List[StrainData], path: str) -> None:
+    """Write the scraped data to a JSON file."""
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump([s.as_dict() | {"url": s.url} for s in strains], f, indent=2)
+
+
 def fetch_strain_page(slug: str) -> Optional[str]:
     """Download the HTML for a strain detail page.
 
@@ -203,48 +246,44 @@ def fetch_strain_page(slug: str) -> Optional[str]:
         print(f"[ERROR] Failed to fetch strain page '{slug}': {exc}", file=sys.stderr)
         return None
 
+    finally:
+        # Always be polite and pause between requests
+        time.sleep(REQUEST_DELAY)
+    
 
-def scrape_flowzz() -> List[StrainData]:
-    """Collect statistics for all strains.
+def scrape_flowzz(concurrency: int = 5) -> List[StrainData]:
+    """Collect statistics for all strains using concurrent requests."""
 
-    Returns a list of StrainData objects.
-    """
     strains_info = fetch_strain_list()
     results: List[StrainData] = []
-    total = len(strains_info)
-    for idx, entry in enumerate(strains_info, start=1):
+
+    def process(entry: Dict[str, str]) -> StrainData:
         name = entry["name"]
         slug = entry["slug"]
-        print(f"Processing {idx}/{total}: {name} ({slug})")
         html = fetch_strain_page(slug)
         if not html:
-            # Skip if we couldn't download the page.
-            results.append(
-                StrainData(name=name, slug=slug, num_likes=None, ratings_score=None, ratings_count=None)
-            )
-            continue
-        metrics = extract_metrics_from_html(html)
-        results.append(
-            StrainData(
-                name=name,
-                slug=slug,
-                num_likes=metrics.get("num_likes"),
-                ratings_score=metrics.get("ratings_score"),
-                ratings_count=metrics.get("ratings_count"),
-            )
+            metrics = {"num_likes": None, "ratings_score": None, "ratings_count": None}
+        else:
+            metrics = extract_metrics_from_html(html)
+        return StrainData(
+            name=name,
+            slug=slug,
+            num_likes=metrics.get("num_likes"),
+            ratings_score=metrics.get("ratings_score"),
+            ratings_count=metrics.get("ratings_count"),
         )
-        time.sleep(REQUEST_DELAY)
+
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        futures = [executor.submit(process, entry) for entry in strains_info]
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Scraping"):
+            results.append(future.result())
+
     return results
 
 
-def print_sorted_lists(strains: List[StrainData]) -> None:
-    """Print strains sorted by rating and by likes.
+def print_sorted_lists(strains: List[StrainData], limit: int = 20) -> None:
+    """Print tables of strains sorted by rating and likes."""
 
-    Strains with missing values are placed at the end of each list.  The
-    function prints a simple table for each sorting criterion.
-    """
-    # Sort by rating score (descending).  Use -score for proper ordering,
-    # None values are treated as -1 so they sink to the bottom.
     by_rating = sorted(
         strains,
         key=lambda s: (
@@ -254,7 +293,6 @@ def print_sorted_lists(strains: List[StrainData]) -> None:
         ),
     )
 
-    # Sort by number of likes (descending).  None values are treated as -1.
     by_likes = sorted(
         strains,
         key=lambda s: (
@@ -263,24 +301,50 @@ def print_sorted_lists(strains: List[StrainData]) -> None:
         ),
     )
 
-    def print_table(title: str, entries: List[StrainData], metric_key: str) -> None:
-        print("\n" + title)
-        print("=" * len(title))
-        header = f"{'Rank':>4} | {'Strain':<40} | {metric_key.replace('_', ' ').title():>12}"
-        print(header)
-        print("-" * len(header))
-        for rank, strain in enumerate(entries, start=1):
-            metric_value = getattr(strain, metric_key)
-            metric_str = f"{metric_value}" if metric_value is not None else "N/A"
-            print(f"{rank:>4} | {strain.name:<40} | {metric_str:>12}")
+    def to_table(entries: List[StrainData], metric_key: str) -> str:
+        rows = []
+        for rank, s in enumerate(entries[:limit], start=1):
+            metric_val = getattr(s, metric_key)
+            rows.append([
+                rank,
+                s.name,
+                s.url,
+                metric_val if metric_val is not None else "N/A",
+            ])
+        return tabulate(
+            rows,
+            headers=["Rank", "Strain", "URL", metric_key.replace("_", " ").title()],
+            tablefmt="github",
+        )
 
-    print_table("Strains nach Sternebewertung (absteigend)", by_rating, "ratings_score")
-    print_table("Strains nach Likes (absteigend)", by_likes, "num_likes")
+    print("\nStrains nach Sternebewertung (absteigend)")
+    print(to_table(by_rating, "ratings_score"))
+    print("\nStrains nach Likes (absteigend)")
+    print(to_table(by_likes, "num_likes"))
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Scrape strain statistics from flowzz.com")
+    parser.add_argument("--concurrency", type=int, default=5, help="Number of parallel requests")
+    parser.add_argument("--delay", type=float, default=REQUEST_DELAY, help="Delay between requests in seconds")
+    parser.add_argument("--csv", metavar="PATH", help="Write results to CSV file")
+    parser.add_argument("--json", metavar="PATH", help="Write results to JSON file")
+    parser.add_argument("--limit", type=int, default=20, help="Number of rows to display")
+    return parser.parse_args()
 
 
 def main() -> None:
-    strains = scrape_flowzz()
-    print_sorted_lists(strains)
+    args = parse_args()
+    global REQUEST_DELAY
+    REQUEST_DELAY = args.delay
+
+    strains = scrape_flowzz(concurrency=args.concurrency)
+    print_sorted_lists(strains, limit=args.limit)
+
+    if args.csv:
+        save_to_csv(strains, args.csv)
+    if args.json:
+        save_to_json(strains, args.json)
 
 
 if __name__ == "__main__":
