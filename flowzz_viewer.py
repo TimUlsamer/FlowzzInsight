@@ -1,5 +1,8 @@
+import os
 import pandas as pd
 import streamlit as st
+
+import flowzz_product_scraper as scraper
 
 CSV_PATH = "flowzz_products_by_likes.csv"  # Passe ggf. an
 
@@ -10,7 +13,23 @@ st.title("Interaktive Übersicht: Flowzz Cannabisprodukte")
 def load_data(path):
     return pd.read_csv(path)
 
-df = load_data(CSV_PATH)
+@st.cache_data(show_spinner=False)
+def scrape_data() -> pd.DataFrame:
+    """Download products from Flowzz and return as DataFrame."""
+    products = scraper.fetch_all_products(page_size=100, delay=0.1)
+    enriched = scraper.enrich_products_with_likes(products, delay=0.1)
+    return scraper.build_dataframe(enriched)
+
+if "df" not in st.session_state:
+    st.session_state["df"] = load_data(CSV_PATH)
+
+if st.button("Daten aktualisieren"):
+    with st.spinner("Aktualisiere Daten..."):
+        new_df = scrape_data()
+    st.session_state["df"] = new_df
+    new_df.to_csv(CSV_PATH, index=False)
+
+df = st.session_state["df"]
 
 # -------- Filter in der Sidebar --------
 st.sidebar.header("Filter")
