@@ -55,6 +55,8 @@ Flowzz changes its page structure or API, the regular expressions may
 require adjustment.
 """
 
+import argparse
+import csv
 import json
 import re
 import sys
@@ -82,11 +84,17 @@ class StrainData:
     ratings_score: Optional[float]
     ratings_count: Optional[int]
 
+    @property
+    def url(self) -> str:
+        """Return the Flowzz detail page URL for this strain."""
+        return STRAIN_PAGE_URL.format(slug=self.slug)
+
     def as_dict(self) -> Dict[str, Optional[str]]:
         """Return a dict representation of the strain for easy sorting."""
         return {
             "name": self.name,
             "slug": self.slug,
+            "url": self.url,
             "num_likes": self.num_likes,
             "ratings_score": self.ratings_score,
             "ratings_count": self.ratings_count,
@@ -237,14 +245,26 @@ def scrape_flowzz() -> List[StrainData]:
     return results
 
 
-def print_sorted_lists(strains: List[StrainData]) -> None:
-    """Print strains sorted by rating and by likes.
+def save_as_csv(path: str, strains: List[StrainData]) -> None:
+    """Save strain data to a CSV file."""
+    fieldnames = ["name", "slug", "url", "ratings_score", "ratings_count", "num_likes"]
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for strain in strains:
+            writer.writerow(strain.as_dict())
 
-    Strains with missing values are placed at the end of each list.  The
-    function prints a simple table for each sorting criterion.
-    """
-    # Sort by rating score (descending).  Use -score for proper ordering,
-    # None values are treated as -1 so they sink to the bottom.
+
+def save_as_json(path: str, strains: List[StrainData]) -> None:
+    """Save strain data to a JSON file."""
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump([s.as_dict() for s in strains], f, ensure_ascii=False, indent=2)
+
+
+def print_sorted_lists(strains: List[StrainData]) -> None:
+    """Print strains sorted by rating and likes."""
+
+    # Sort by rating score (descending).  Strains with no rating come last.
     by_rating = sorted(
         strains,
         key=lambda s: (
@@ -254,7 +274,7 @@ def print_sorted_lists(strains: List[StrainData]) -> None:
         ),
     )
 
-    # Sort by number of likes (descending).  None values are treated as -1.
+    # Sort by likes (descending).  Strains with no like data come last.
     by_likes = sorted(
         strains,
         key=lambda s: (
@@ -263,24 +283,61 @@ def print_sorted_lists(strains: List[StrainData]) -> None:
         ),
     )
 
-    def print_table(title: str, entries: List[StrainData], metric_key: str) -> None:
+    def print_table(title: str, entries: List[StrainData], metric: str) -> None:
         print("\n" + title)
         print("=" * len(title))
-        header = f"{'Rank':>4} | {'Strain':<40} | {metric_key.replace('_', ' ').title():>12}"
+        header = (
+            f"{'Rank':>4} | {'Strain':<30} | {metric.title():>12} | {'Likes':>6} | URL"
+        )
         print(header)
         print("-" * len(header))
         for rank, strain in enumerate(entries, start=1):
-            metric_value = getattr(strain, metric_key)
+            metric_value = getattr(strain, metric)
             metric_str = f"{metric_value}" if metric_value is not None else "N/A"
-            print(f"{rank:>4} | {strain.name:<40} | {metric_str:>12}")
+            likes_str = (
+                f"{strain.num_likes}" if strain.num_likes is not None else "N/A"
+            )
+            print(
+                f"{rank:>4} | {strain.name:<30} | {metric_str:>12} | {likes_str:>6} | {strain.url}"
+            )
 
-    print_table("Strains nach Sternebewertung (absteigend)", by_rating, "ratings_score")
+    print_table(
+        "Strains nach Sternebewertung (absteigend)", by_rating, "ratings_score"
+    )
     print_table("Strains nach Likes (absteigend)", by_likes, "num_likes")
 
 
+def parse_args() -> argparse.Namespace:
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description="Scrape strain data from Flowzz")
+    parser.add_argument(
+        "-o",
+        "--output",
+        default="strain_data.csv",
+        help="Path to the output file (default: strain_data.csv)",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Save data in JSON format instead of CSV",
+    )
+    parser.add_argument(
+        "--no-tables",
+        action="store_true",
+        help="Do not print summary tables to the console",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
+    args = parse_args()
     strains = scrape_flowzz()
-    print_sorted_lists(strains)
+    if args.json:
+        save_as_json(args.output, strains)
+    else:
+        save_as_csv(args.output, strains)
+    if not args.no_tables:
+        print_sorted_lists(strains)
 
 
 if __name__ == "__main__":
