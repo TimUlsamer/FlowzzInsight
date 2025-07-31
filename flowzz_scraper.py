@@ -27,17 +27,19 @@ The script performs the following high‑level steps:
    of ratings (`ratings_count`).  We extract these values with regular
    expressions.
 3. **Aggregate and sort.**  After collecting metrics for every strain,
-   the script prints two lists to standard output:
+   the script writes the data to a file (CSV or JSON) and prints two
+   ranked tables:
    * strains sorted by descending star rating, and
    * strains sorted by descending number of likes.
 
 Usage
 -----
 
-Run the script directly with Python 3:
+Run the script directly with Python 3.  Use ``--help`` to see all
+available options:
 
 ```
-python flowzz_scraper.py
+python flowzz_scraper.py --help
 ```
 
 The script will report progress to the console and may take several
@@ -55,16 +57,19 @@ Flowzz changes its page structure or API, the regular expressions may
 require adjustment.
 """
 
+import argparse
+import csv
 import json
 import re
 import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import requests
 
-# A polite delay between HTTP requests (in seconds).
+# Default delay between HTTP requests (in seconds). Can be overridden via CLI.
 REQUEST_DELAY = 0.5
 
 # Base URLs used by the scraper.
@@ -237,50 +242,136 @@ def scrape_flowzz() -> List[StrainData]:
     return results
 
 
-def print_sorted_lists(strains: List[StrainData]) -> None:
-    """Print strains sorted by rating and by likes.
+def save_results(strains: List[StrainData], path: Path, fmt: str = "csv") -> None:
+    """Save the scraped data to ``path``.
 
-    Strains with missing values are placed at the end of each list.  The
-    function prints a simple table for each sorting criterion.
+    Parameters
+    ----------
+    strains:
+        List of :class:`StrainData` objects to persist.
+    path:
+        Destination file path.
+    fmt:
+        Either ``"csv"`` or ``"json"``.
     """
-    # Sort by rating score (descending).  Use -score for proper ordering,
-    # None values are treated as -1 so they sink to the bottom.
-    by_rating = sorted(
-        strains,
-        key=lambda s: (
-            -(s.ratings_score if s.ratings_score is not None else -1.0),
-            -(s.ratings_count if s.ratings_count is not None else 0),
-            s.name.lower(),
-        ),
-    )
+    path = Path(path)
+    if fmt.lower() == "json":
+        with path.open("w", encoding="utf-8") as fh:
+            json.dump([s.as_dict() for s in strains], fh, ensure_ascii=False, indent=2)
+    else:
+        with path.open("w", newline="", encoding="utf-8") as fh:
+            fieldnames = [
+                "name",
+                "slug",
+                "url",
+                "ratings_score",
+                "ratings_count",
+                "num_likes",
+            ]
+            writer = csv.DictWriter(fh, fieldnames=fieldnames)
+            writer.writeheader()
+            for s in strains:
+                row = s.as_dict()
+                row["url"] = STRAIN_PAGE_URL.format(slug=s.slug)
+                writer.writerow(row)
+    print(f"Saved results to {path.resolve()}")
 
-    # Sort by number of likes (descending).  None values are treated as -1.
-    by_likes = sorted(
-        strains,
-        key=lambda s: (
-            -(s.num_likes if s.num_likes is not None else -1),
-            s.name.lower(),
-        ),
-    )
 
-    def print_table(title: str, entries: List[StrainData], metric_key: str) -> None:
+def parse_args() -> argparse.Namespace:
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description="Scrape strain statistics from flowzz.com")
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=Path("flowzz_strains.csv"),
+        help="File to save the results (default: flowzz_strains.csv)",
+    )
+    parser.add_argument(
+        "-f",
+        "--format",
+        choices=["csv", "json"],
+        default="csv",
+        help="Output file format",
+    )
+    parser.add_argument(
+        "-d",
+        "--delay",
+        type=float,
+        default=REQUEST_DELAY,
+        help="Delay between HTTP requests in seconds",
+    )
+    parser.add_argument(
+        "-t",
+        "--top",
+        type=int,
+        default=20,
+        help="Number of entries to display in the ranking tables",
+    )
+    return parser.parse_args()
+
+
+def print_sorted_lists(strains: List[StrainData], *, top_n: int = 20) -> None:
+    """Print ranking tables for the scraped strains.
+
+    Parameters
+    ----------
+    strains:
+        The collected strain data.
+    top_n:
+        Limit output to the top ``n`` entries for each ranking.
+    """
+
+    def sort_by_rating(item: StrainData) -> tuple:
+        return (
+            -(item.ratings_score if item.ratings_score is not None else -1.0),
+            -(item.ratings_count if item.ratings_count is not None else 0),
+            item.name.lower(),
+        )
+
+    def sort_by_likes(item: StrainData) -> tuple:
+        return (
+            -(item.num_likes if item.num_likes is not None else -1),
+            item.name.lower(),
+        )
+
+    by_rating = sorted(strains, key=sort_by_rating)
+    by_likes = sorted(strains, key=sort_by_likes)
+
+    def print_table(title: str, entries: List[StrainData]) -> None:
         print("\n" + title)
         print("=" * len(title))
-        header = f"{'Rank':>4} | {'Strain':<40} | {metric_key.replace('_', ' ').title():>12}"
+        header = (
+            f"{'Rank':>4}  {'Strain':<30}  {'Rating':>6}  "
+            f"{'Votes':>5}  {'Likes':>5}  {'URL'}"
+        )
         print(header)
         print("-" * len(header))
-        for rank, strain in enumerate(entries, start=1):
-            metric_value = getattr(strain, metric_key)
-            metric_str = f"{metric_value}" if metric_value is not None else "N/A"
-            print(f"{rank:>4} | {strain.name:<40} | {metric_str:>12}")
+        for rank, strain in enumerate(entries[:top_n], start=1):
+            url = STRAIN_PAGE_URL.format(slug=strain.slug)
+            rating = (
+                f"{strain.ratings_score:.2f}" if strain.ratings_score is not None else "N/A"
+            )
+            votes = (
+                f"{strain.ratings_count}" if strain.ratings_count is not None else "N/A"
+            )
+            likes = f"{strain.num_likes}" if strain.num_likes is not None else "N/A"
+            print(
+                f"{rank:>4}  {strain.name:<30}  {rating:>6}  {votes:>5}  {likes:>5}  {url}"
+            )
 
-    print_table("Strains nach Sternebewertung (absteigend)", by_rating, "ratings_score")
-    print_table("Strains nach Likes (absteigend)", by_likes, "num_likes")
+    print_table("Top Strains by Rating", by_rating)
+    print_table("Top Strains by Likes", by_likes)
 
 
 def main() -> None:
+    args = parse_args()
+    global REQUEST_DELAY
+    REQUEST_DELAY = args.delay
+
     strains = scrape_flowzz()
-    print_sorted_lists(strains)
+    print_sorted_lists(strains, top_n=args.top)
+    save_results(strains, args.output, args.format)
 
 
 if __name__ == "__main__":
