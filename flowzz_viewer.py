@@ -102,15 +102,47 @@ filtered_df = filtered_df.sort_values(by=sort_col, ascending=ascending)
 
 # -------- Anzeige ---------
 st.write(f"**{len(filtered_df)} Produkte gefunden**")
-st.dataframe(filtered_df, use_container_width=True)
+
+if "table_selected_ids" not in st.session_state:
+    st.session_state["table_selected_ids"] = []
+
+display_df = filtered_df.copy()
+display_df["Auswahl"] = display_df["id"].isin(st.session_state["table_selected_ids"])
+
+disabled_cols = [c for c in display_df.columns if c != "Auswahl"]
+edited_df = st.data_editor(
+    display_df,
+    column_config={"Auswahl": st.column_config.CheckboxColumn("Auswahl")},
+    disabled=disabled_cols,
+    use_container_width=True,
+    key="strain_selector",
+)
+
+selected_ids = edited_df.loc[edited_df["Auswahl"], "id"].tolist()
+if len(selected_ids) > 3:
+    st.warning("Maximal 3 Sorten können ausgewählt werden.")
+    selected_ids = selected_ids[:3]
+
+st.session_state["table_selected_ids"] = selected_ids
+
+selected_names_table = df[df["id"].isin(selected_ids)]["name"].tolist()
+if selected_names_table:
+    st.write("Ausgewählt: " + ", ".join(selected_names_table))
+else:
+    st.write("Keine Sorten aus der Liste ausgewählt")
 
 # Download
-st.download_button("CSV exportieren", filtered_df.to_csv(index=False), "flowzz_export.csv", "text/csv")
+st.download_button(
+    "CSV exportieren",
+    filtered_df.to_csv(index=False),
+    "flowzz_export.csv",
+    "text/csv",
+)
 
 # -------- Pharmacy Finder ---------
 st.header("Apotheken Finder")
 
-# List of unique strains
+# List of unique strains for dropdown
 strain_options = df[["id", "name"]].drop_duplicates().sort_values("name")
 selected_names = st.multiselect(
     "Bis zu 3 Sorten auswählen",
@@ -118,14 +150,18 @@ selected_names = st.multiselect(
     max_selections=3,
 )
 
-if selected_names:
-    id_map = dict(zip(strain_options["name"], strain_options["id"]))
-    strain_ids = [id_map[name] for name in selected_names]
+id_map = dict(zip(strain_options["name"], strain_options["id"]))
+ids_from_dropdown = [id_map[name] for name in selected_names]
+ids_from_table = st.session_state.get("table_selected_ids", [])
+
+# combine unique ids from both selection methods
+combined_ids = list(dict.fromkeys(ids_from_table + ids_from_dropdown))
+
+if combined_ids:
     if st.button("Apotheken suchen"):
         with st.spinner("Suche Apotheken..."):
-            results = pharmacies_with_all_strains(strain_ids)
+            results = pharmacies_with_all_strains(combined_ids)
         if results:
-            # Build dataframe for display
             display_rows = []
             for entry in results:
                 row = {
@@ -133,7 +169,7 @@ if selected_names:
                     "Website": entry["website"],
                     "Gesamtpreis": entry["total"],
                 }
-                for sid in strain_ids:
+                for sid in combined_ids:
                     name = strain_options.loc[strain_options["id"] == sid, "name"].values[0]
                     row[name] = entry["prices"][sid]
                 display_rows.append(row)
