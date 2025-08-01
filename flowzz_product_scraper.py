@@ -235,6 +235,32 @@ def fetch_product_likes(session: requests.Session, slug: str) -> Optional[int]:
     return attributes.get("num_likes")
 
 
+def fetch_product_detail(
+    slug: str, session: Optional[requests.Session] = None
+) -> ProductDetails:
+    """Return complete product information for a single slug."""
+    if session is None:
+        session = requests.Session()
+    url = f"{API_BASE}/{slug}"
+    resp = session.get(url)
+    resp.raise_for_status()
+    data = resp.json().get("data", {})
+    attrs = data.get("attributes", {})
+    return ProductDetails(
+        id=data.get("id"),
+        name=attrs.get("name"),
+        thc=attrs.get("thc"),
+        cbd=attrs.get("cbd"),
+        ratings_score=attrs.get("ratings_score"),
+        ratings_count=attrs.get("ratings_count"),
+        min_price=attrs.get("min_price"),
+        max_price=attrs.get("max_price"),
+        slug=slug,
+        num_likes=attrs.get("num_likes") or data.get("num_likes"),
+        product_link=f"https://flowzz.com/product/{slug}",
+    )
+
+
 def enrich_products_with_likes(
     products: List[ProductSummary], delay: float = 0.5
 ) -> List[ProductDetails]:

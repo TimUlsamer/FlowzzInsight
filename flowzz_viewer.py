@@ -130,6 +130,35 @@ edited_df = st.data_editor(
     ),
 )
 
+# Button to refresh selected strains
+selected_ids = edited_df[edited_df["Auswahl"]].index.tolist()
+if st.button("Ausgewählte aktualisieren"):
+    if not selected_ids:
+        st.warning("Bitte mindestens eine Sorte auswählen")
+    else:
+        with st.spinner("Aktualisiere Sorten..."):
+            new_rows = []
+            for sid in selected_ids:
+                slug = df.loc[df["id"] == sid, "slug"].values[0]
+                detail = scraper.fetch_product_detail(slug)
+                new_rows.append(detail)
+            for detail in new_rows:
+                df.loc[df["id"] == detail.id, :] = [
+                    detail.id,
+                    detail.name,
+                    detail.thc,
+                    detail.cbd,
+                    detail.ratings_score,
+                    detail.ratings_count,
+                    detail.num_likes,
+                    detail.min_price,
+                    detail.max_price,
+                    detail.slug,
+                    detail.product_link,
+                ]
+        st.session_state["df"] = df
+        df.to_csv(CSV_PATH, index=False)
+
 # Download
 st.download_button(
     "CSV exportieren",
