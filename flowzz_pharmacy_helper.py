@@ -5,6 +5,7 @@ from typing import List, Dict, Optional
 
 API_VENDOR = "https://flowzz.com/api/vendor?t=2&id={id}"
 
+
 @dataclass
 class VendorInfo:
     name: str
@@ -12,7 +13,9 @@ class VendorInfo:
     website: Optional[str]
 
 
-def fetch_vendors_for_strain(strain_id: int, session: Optional[requests.Session] = None) -> List[VendorInfo]:
+def fetch_vendors_for_strain(
+    strain_id: int, session: Optional[requests.Session] = None
+) -> List[VendorInfo]:
     """Return vendors offering a given strain with availability 1 or 2."""
     if session is None:
         session = requests.Session()
@@ -21,10 +24,7 @@ def fetch_vendors_for_strain(strain_id: int, session: Optional[requests.Session]
     resp.raise_for_status()
     data = resp.json()
     vendors_raw = (
-        data.get("message", {})
-        .get("data", {})
-        .get("priceFlowers", {})
-        .get("data", [])
+        data.get("message", {}).get("data", {}).get("priceFlowers", {}).get("data", [])
     )
     vendors: List[VendorInfo] = []
     for vendor in vendors_raw:
@@ -64,6 +64,8 @@ def pharmacies_with_all_strains(strain_ids: List[int]) -> List[Dict[str, object]
             total += v.price
             if website is None:
                 website = v.website
-        results.append({"pharmacy": name, "prices": prices, "total": total, "website": website})
+        results.append(
+            {"pharmacy": name, "prices": prices, "total": total, "website": website}
+        )
     results.sort(key=lambda x: x["total"])
     return results

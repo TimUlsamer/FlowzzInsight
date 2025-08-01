@@ -10,9 +10,11 @@ CSV_PATH = "flowzz_products_by_likes.csv"  # Passe ggf. an
 st.set_page_config(page_title="Flowzz Produktübersicht", layout="wide")
 st.title("Interaktive Übersicht: Flowzz Cannabisprodukte")
 
+
 @st.cache_data
 def load_data(path):
     return pd.read_csv(path)
+
 
 @st.cache_data(show_spinner=False)
 def scrape_data() -> pd.DataFrame:
@@ -20,6 +22,7 @@ def scrape_data() -> pd.DataFrame:
     products = scraper.fetch_all_products(page_size=100, delay=0.1)
     enriched = scraper.enrich_products_with_likes(products, delay=0.1)
     return scraper.build_dataframe(enriched)
+
 
 if "df" not in st.session_state:
     st.session_state["df"] = load_data(CSV_PATH)
@@ -40,18 +43,16 @@ name_filter = st.sidebar.text_input("Produktsuche (Name)")
 
 # THC Filter
 min_thc, max_thc = float(df["thc"].min()), float(df["thc"].max())
-thc_slider = st.sidebar.slider(
-    "THC-Gehalt (%)", min_thc, max_thc, (min_thc, max_thc)
-)
+thc_slider = st.sidebar.slider("THC-Gehalt (%)", min_thc, max_thc, (min_thc, max_thc))
 
 # CBD Filter
 min_cbd, max_cbd = float(df["cbd"].min()), float(df["cbd"].max())
-cbd_slider = st.sidebar.slider(
-    "CBD-Gehalt (%)", min_cbd, max_cbd, (min_cbd, max_cbd)
-)
+cbd_slider = st.sidebar.slider("CBD-Gehalt (%)", min_cbd, max_cbd, (min_cbd, max_cbd))
 
 # Ratings Score Filter
-min_rating, max_rating = float(df["ratings_score"].min()), float(df["ratings_score"].max())
+min_rating, max_rating = float(df["ratings_score"].min()), float(
+    df["ratings_score"].max()
+)
 rating_slider = st.sidebar.slider(
     "Bewertung (Sterne)", min_rating, max_rating, (min_rating, max_rating)
 )
@@ -85,7 +86,9 @@ filtered_df = df.copy()
 
 # Name-Filter
 if name_filter:
-    filtered_df = filtered_df[filtered_df["name"].str.contains(name_filter, case=False, na=False)]
+    filtered_df = filtered_df[
+        filtered_df["name"].str.contains(name_filter, case=False, na=False)
+    ]
 
 # THC, CBD, Rating, Rating Count, Likes, Preis-Filter
 filtered_df = filtered_df[
@@ -103,14 +106,29 @@ filtered_df = filtered_df.sort_values(by=sort_col, ascending=ascending)
 # -------- Anzeige ---------
 st.write(f"**{len(filtered_df)} Produkte gefunden**")
 
+# Spalte mit klickbarem Link direkt neben dem Produktnamen
+display_df = filtered_df.drop(columns=["product_link", "slug"], errors="ignore").copy()
+if "product_link" in filtered_df.columns:
+    name_index = list(display_df.columns).index("name") + 1
+    display_df.insert(name_index, "Produktseite", filtered_df["product_link"])
+
 # Editor mit Auswahlmöglichkeit
-select_df = filtered_df.set_index("id")
+select_df = display_df.set_index("id")
 select_df.insert(0, "Auswahl", False)
 edited_df = st.data_editor(
     select_df,
     use_container_width=True,
     hide_index=True,
     key="product_editor",
+    column_config=(
+        {
+            "Produktseite": st.column_config.LinkColumn(
+                "Produktseite", display_text=":material/open_in_new:"
+            )
+        }
+        if "Produktseite" in select_df.columns
+        else None
+    ),
 )
 
 # Download
