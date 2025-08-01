@@ -76,10 +76,9 @@ price_slider = st.sidebar.slider(
 )
 
 # --------- Sortieren ---------
-sort_col = st.sidebar.selectbox(
-    "Sortiere nach", options=df.columns, index=list(df.columns).index("num_likes")
-)
-ascending = st.sidebar.checkbox("Aufsteigend sortieren", value=False)
+# Feste Sortierung nach der Anzahl der Likes in absteigender Reihenfolge
+sort_col = "num_likes"
+ascending = False
 
 # --------- Anwenden der Filter ----------
 filtered_df = df.copy()
