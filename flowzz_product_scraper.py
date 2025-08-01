@@ -77,6 +77,7 @@ API_BASE = "https://flowzz.com/api/v1/views/flowers"
 @dataclass
 class ProductSummary:
     """Represents a product entry from the listing endpoint."""
+
     id: int
     name: str
     thc: Optional[float]
@@ -91,6 +92,7 @@ class ProductSummary:
 @dataclass
 class ProductDetails(ProductSummary):
     """Extends ProductSummary with likes and computed link."""
+
     num_likes: Optional[int]
     product_link: str
 
@@ -124,7 +126,9 @@ def fetch_listing(session: requests.Session, page: int, page_size: int = 100) ->
     return response.json()
 
 
-def fetch_all_products(page_size: int = 100, delay: float = 0.5) -> List[ProductSummary]:
+def fetch_all_products(
+    page_size: int = 100, delay: float = 0.5
+) -> List[ProductSummary]:
     """
     Retrieve all flower products from Flowzz.
 
@@ -231,7 +235,9 @@ def fetch_product_likes(session: requests.Session, slug: str) -> Optional[int]:
     return attributes.get("num_likes")
 
 
-def enrich_products_with_likes(products: List[ProductSummary], delay: float = 0.5) -> List[ProductDetails]:
+def enrich_products_with_likes(
+    products: List[ProductSummary], delay: float = 0.5
+) -> List[ProductDetails]:
     """
     Fetch likes for every product in a list and return enriched objects.
 
@@ -313,16 +319,21 @@ def main() -> None:
     df = scrape_all(page_size=100, delay=0.1)
 
     # Sort by likes (descending) and display
-    df_by_likes = df.sort_values(by=["num_likes", "ratings_score"], ascending=[False, False])
+    df_by_likes = df.sort_values(
+        by=["num_likes", "ratings_score"], ascending=[False, False]
+    )
     print("\nTop products sorted by likes:\n")
     print(df_by_likes.head(50).to_string(index=False))
     df_by_likes.to_csv("flowzz_products_by_likes.csv", index=False)
 
     # Sort by ratings_score (descending) and display
-    df_by_rating = df.sort_values(by=["ratings_score", "ratings_count"], ascending=[False, False])
+    df_by_rating = df.sort_values(
+        by=["ratings_score", "ratings_count"], ascending=[False, False]
+    )
     print("\nTop products sorted by star rating:\n")
     print(df_by_rating.head(50).to_string(index=False))
     df_by_rating.to_csv("flowzz_products_by_rating.csv", index=False)
 
-    print("\nData exported to 'flowzz_products_by_likes.csv' and 'flowzz_products_by_rating.csv'.")
-
+    print(
+        "\nData exported to 'flowzz_products_by_likes.csv' and 'flowzz_products_by_rating.csv'."
+    )
