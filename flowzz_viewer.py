@@ -102,30 +102,49 @@ filtered_df = filtered_df.sort_values(by=sort_col, ascending=ascending)
 
 # -------- Anzeige ---------
 st.write(f"**{len(filtered_df)} Produkte gefunden**")
-st.dataframe(filtered_df, use_container_width=True)
+
+# Editor mit Auswahlmöglichkeit
+select_df = filtered_df.copy()
+select_df["Auswahl"] = False
+edited_df = st.data_editor(
+    select_df,
+    use_container_width=True,
+    hide_index=True,
+    key="product_editor",
+)
 
 # Download
-st.download_button("CSV exportieren", filtered_df.to_csv(index=False), "flowzz_export.csv", "text/csv")
+st.download_button(
+    "CSV exportieren",
+    filtered_df.to_csv(index=False),
+    "flowzz_export.csv",
+    "text/csv",
+)
 
 # -------- Pharmacy Finder ---------
 st.header("Apotheken Finder")
 
-# List of unique strains
-strain_options = df[["id", "name"]].drop_duplicates().sort_values("name")
-selected_names = st.multiselect(
-    "Bis zu 3 Sorten auswählen",
-    options=list(strain_options["name"]),
-    max_selections=3,
-)
+# Bis zu 3 Sorten aus der Tabelle wählbar
+selected_rows = edited_df[edited_df["Auswahl"]]
 
-if selected_names:
-    id_map = dict(zip(strain_options["name"], strain_options["id"]))
-    strain_ids = [id_map[name] for name in selected_names]
-    if st.button("Apotheken suchen"):
+if len(selected_rows) > 3:
+    st.warning("Bitte maximal 3 Sorten auswählen")
+else:
+    strain_options = df[["id", "name"]].drop_duplicates().sort_values("name")
+    remaining = 3 - len(selected_rows)
+    manual_select = st.multiselect(
+        "Weitere Sorten auswählen (optional)",
+        options=list(strain_options["name"]),
+        max_selections=remaining,
+    )
+    strain_ids = selected_rows["id"].tolist()
+    if manual_select:
+        id_map = dict(zip(strain_options["name"], strain_options["id"]))
+        strain_ids.extend(id_map[name] for name in manual_select)
+    if strain_ids and st.button("Apotheken suchen"):
         with st.spinner("Suche Apotheken..."):
             results = pharmacies_with_all_strains(strain_ids)
         if results:
-            # Build dataframe for display
             display_rows = []
             for entry in results:
                 row = {
@@ -134,7 +153,7 @@ if selected_names:
                     "Gesamtpreis": entry["total"],
                 }
                 for sid in strain_ids:
-                    name = strain_options.loc[strain_options["id"] == sid, "name"].values[0]
+                    name = df.loc[df["id"] == sid, "name"].values[0]
                     row[name] = entry["prices"][sid]
                 display_rows.append(row)
             res_df = pd.DataFrame(display_rows).sort_values("Gesamtpreis")
