@@ -3,6 +3,7 @@ import pandas as pd
 import streamlit as st
 
 import flowzz_product_scraper as scraper
+from flowzz_pharmacy_helper import pharmacies_with_all_strains
 
 CSV_PATH = "flowzz_products_by_likes.csv"  # Passe ggf. an
 
@@ -105,3 +106,39 @@ st.dataframe(filtered_df, use_container_width=True)
 
 # Download
 st.download_button("CSV exportieren", filtered_df.to_csv(index=False), "flowzz_export.csv", "text/csv")
+
+# -------- Pharmacy Finder ---------
+st.header("Apotheken Finder")
+
+# List of unique strains
+strain_options = df[["id", "name"]].drop_duplicates().sort_values("name")
+selected_names = st.multiselect(
+    "Bis zu 3 Sorten auswählen",
+    options=list(strain_options["name"]),
+    max_selections=3,
+)
+
+if selected_names:
+    id_map = dict(zip(strain_options["name"], strain_options["id"]))
+    strain_ids = [id_map[name] for name in selected_names]
+    if st.button("Apotheken suchen"):
+        with st.spinner("Suche Apotheken..."):
+            results = pharmacies_with_all_strains(strain_ids)
+        if results:
+            # Build dataframe for display
+            display_rows = []
+            for entry in results:
+                row = {
+                    "Apotheke": entry["pharmacy"],
+                    "Website": entry["website"],
+                    "Gesamtpreis": entry["total"],
+                }
+                for sid in strain_ids:
+                    name = strain_options.loc[strain_options["id"] == sid, "name"].values[0]
+                    row[name] = entry["prices"][sid]
+                display_rows.append(row)
+            res_df = pd.DataFrame(display_rows).sort_values("Gesamtpreis")
+            st.write(f"**{len(res_df)} Apotheken gefunden**")
+            st.dataframe(res_df, use_container_width=True)
+        else:
+            st.write("Keine Apotheke führt alle ausgewählten Sorten.")
