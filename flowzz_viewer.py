@@ -24,6 +24,12 @@ def scrape_data() -> pd.DataFrame:
     return scraper.build_dataframe(enriched)
 
 
+@st.cache_data(show_spinner=False)
+def scrape_selected(slugs: list[str]) -> pd.DataFrame:
+    """Download updated data for selected products."""
+    return scraper.scrape_by_slugs(slugs, delay=0.1)
+
+
 if "df" not in st.session_state:
     st.session_state["df"] = load_data(CSV_PATH)
 
@@ -129,6 +135,20 @@ edited_df = st.data_editor(
         else None
     ),
 )
+
+# Button to update selected strains
+selected_rows = edited_df[edited_df["Auswahl"]]
+selected_ids_update = selected_rows.index.tolist()
+if selected_ids_update and st.button("Ausgewählte aktualisieren"):
+    slugs = df.loc[df["id"].isin(selected_ids_update), "slug"].dropna().tolist()
+    with st.spinner("Aktualisiere Sorten..."):
+        updated_df = scrape_selected(slugs)
+    if not updated_df.empty:
+        df = df.set_index("id")
+        df.update(updated_df.set_index("id"))
+        df.reset_index(inplace=True)
+        st.session_state["df"] = df
+        df.to_csv(CSV_PATH, index=False)
 
 # Download
 st.download_button(

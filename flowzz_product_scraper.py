@@ -306,6 +306,51 @@ def build_dataframe(products: List[ProductDetails]) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
+def fetch_product_details(session: requests.Session, slug: str) -> ProductDetails:
+    """Download detailed information for a single product."""
+    url = f"{API_BASE}/{slug}"
+    resp = session.get(url)
+    resp.raise_for_status()
+    data = resp.json().get("data", {})
+    attrs = data.get("attributes", {})
+    likes = data.get("num_likes")
+    if likes is None:
+        likes = attrs.get("num_likes")
+    return ProductDetails(
+        id=data.get("id"),
+        name=attrs.get("name"),
+        thc=attrs.get("thc"),
+        cbd=attrs.get("cbd"),
+        ratings_score=attrs.get("ratings_score"),
+        ratings_count=attrs.get("ratings_count"),
+        min_price=attrs.get("min_price"),
+        max_price=attrs.get("max_price"),
+        slug=slug,
+        num_likes=likes,
+        product_link=f"https://flowzz.com/product/{slug}",
+    )
+
+
+def fetch_products_by_slugs(slugs: List[str], delay: float = 0.5) -> List[ProductDetails]:
+    """Return detailed product data for a list of slugs."""
+    session = requests.Session()
+    results: List[ProductDetails] = []
+    for slug in slugs:
+        try:
+            details = fetch_product_details(session, slug)
+        except requests.HTTPError:
+            continue
+        results.append(details)
+        time.sleep(delay)
+    return results
+
+
+def scrape_by_slugs(slugs: List[str], delay: float = 0.5) -> pd.DataFrame:
+    """Convenience wrapper returning a DataFrame for selected slugs."""
+    products = fetch_products_by_slugs(slugs, delay=delay)
+    return build_dataframe(products)
+
+
 def scrape_all(page_size: int = 100, delay: float = 0.1) -> pd.DataFrame:
     """Convenience wrapper returning a DataFrame with all product data."""
     products = fetch_all_products(page_size=page_size, delay=delay)
