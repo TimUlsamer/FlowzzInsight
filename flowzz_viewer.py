@@ -6,6 +6,7 @@ import flowzz_product_scraper as scraper
 from flowzz_pharmacy_helper import pharmacies_with_all_strains
 
 CSV_PATH = "flowzz_products_by_likes.csv"  # Passe ggf. an
+MAX_SELECTION = 3  # max strains to search pharmacies for
 
 st.set_page_config(page_title="Flowzz Produktübersicht", layout="wide")
 st.title("Interaktive Übersicht: Flowzz Cannabisprodukte")
@@ -102,30 +103,50 @@ filtered_df = filtered_df.sort_values(by=sort_col, ascending=ascending)
 
 # -------- Anzeige ---------
 st.write(f"**{len(filtered_df)} Produkte gefunden**")
-st.dataframe(filtered_df, use_container_width=True)
+
+if "selected_ids" not in st.session_state:
+    st.session_state["selected_ids"] = []
+
+display_df = filtered_df.copy()
+display_df["Auswählen"] = display_df["id"].isin(st.session_state["selected_ids"])
+edited_df = st.data_editor(
+    display_df,
+    column_config={
+        "Auswählen": st.column_config.CheckboxColumn("Für Suche auswählen", width="small")
+    },
+    disabled=[c for c in display_df.columns if c != "Auswählen"],
+    hide_index=True,
+    use_container_width=True,
+    key="product_editor",
+)
+
+st.session_state["selected_ids"] = (
+    edited_df.loc[edited_df["Auswählen"], "id"].tolist()
+)
 
 # Download
-st.download_button("CSV exportieren", filtered_df.to_csv(index=False), "flowzz_export.csv", "text/csv")
+st.download_button(
+    "CSV exportieren", filtered_df.to_csv(index=False), "flowzz_export.csv", "text/csv"
+)
 
 # -------- Pharmacy Finder ---------
 st.header("Apotheken Finder")
 
-# List of unique strains
 strain_options = df[["id", "name"]].drop_duplicates().sort_values("name")
-selected_names = st.multiselect(
-    "Bis zu 3 Sorten auswählen",
-    options=list(strain_options["name"]),
-    max_selections=3,
-)
+selected_ids = st.session_state.get("selected_ids", [])
+selected_names = [
+    strain_options.loc[strain_options["id"] == sid, "name"].values[0]
+    for sid in selected_ids
+]
 
 if selected_names:
-    id_map = dict(zip(strain_options["name"], strain_options["id"]))
-    strain_ids = [id_map[name] for name in selected_names]
-    if st.button("Apotheken suchen"):
+    st.write("Ausgewählt:", ", ".join(selected_names))
+    if len(selected_ids) > MAX_SELECTION:
+        st.error(f"Bitte maximal {MAX_SELECTION} Sorten auswählen.")
+    elif st.button("Apotheken suchen"):
         with st.spinner("Suche Apotheken..."):
-            results = pharmacies_with_all_strains(strain_ids)
+            results = pharmacies_with_all_strains(selected_ids)
         if results:
-            # Build dataframe for display
             display_rows = []
             for entry in results:
                 row = {
@@ -133,7 +154,7 @@ if selected_names:
                     "Website": entry["website"],
                     "Gesamtpreis": entry["total"],
                 }
-                for sid in strain_ids:
+                for sid in selected_ids:
                     name = strain_options.loc[strain_options["id"] == sid, "name"].values[0]
                     row[name] = entry["prices"][sid]
                 display_rows.append(row)
