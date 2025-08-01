@@ -32,6 +32,12 @@ if st.button("Daten aktualisieren"):
 
 df = st.session_state["df"]
 
+# Spalte mit klickbarem Link einfügen und alte Link-Spalte entfernen
+if "product_link" in df.columns:
+    link_index = list(df.columns).index("name") + 1
+    df.insert(link_index, "Produktseite", df["product_link"])
+    df.drop(columns=["product_link"], inplace=True)
+
 # -------- Filter in der Sidebar --------
 st.sidebar.header("Filter")
 
@@ -111,6 +117,9 @@ edited_df = st.data_editor(
     use_container_width=True,
     hide_index=True,
     key="product_editor",
+    column_config={
+        "Produktseite": st.column_config.LinkColumn("", display_text="🔗")
+    },
 )
 
 # Download
