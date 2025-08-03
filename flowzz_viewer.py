@@ -112,8 +112,10 @@ if "product_link" in filtered_df.columns:
     display_df.insert(name_index, "Produktseite", filtered_df["product_link"])
 
 # Editor mit Auswahlmöglichkeit
+if "selected_ids" not in st.session_state:
+    st.session_state["selected_ids"] = []
 select_df = display_df.set_index("id")
-select_df.insert(0, "Auswahl", False)
+select_df.insert(0, "Auswahl", select_df.index.isin(st.session_state["selected_ids"]))
 edited_df = st.data_editor(
     select_df,
     use_container_width=True,
@@ -129,9 +131,10 @@ edited_df = st.data_editor(
         else None
     ),
 )
+st.session_state["selected_ids"] = edited_df[edited_df["Auswahl"]].index.tolist()
 
 # Button to refresh selected strains
-selected_ids = edited_df[edited_df["Auswahl"]].index.tolist()
+selected_ids = st.session_state["selected_ids"]
 if st.button("Ausgewählte aktualisieren"):
     if not selected_ids:
         st.warning("Bitte mindestens eine Sorte auswählen")
