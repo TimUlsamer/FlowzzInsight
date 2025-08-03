@@ -35,6 +35,10 @@ if st.button("Daten aktualisieren"):
 
 df = st.session_state["df"]
 
+# Remember selected rows between reruns so checkboxes stay ticked
+if "selected_ids" not in st.session_state:
+    st.session_state["selected_ids"] = []
+
 # -------- Filter in der Sidebar --------
 st.sidebar.header("Filter")
 
@@ -113,7 +117,19 @@ if "product_link" in filtered_df.columns:
 
 # Editor mit Auswahlmöglichkeit
 select_df = display_df.set_index("id")
+
+# Pull current selections from widget state before rendering
+if "product_editor" in st.session_state and "Auswahl" in st.session_state["product_editor"].columns:
+    st.session_state["selected_ids"] = st.session_state["product_editor"][
+        st.session_state["product_editor"]["Auswahl"]
+    ].index.tolist()
+
 select_df.insert(0, "Auswahl", False)
+# Preselect previously chosen strains
+if st.session_state["selected_ids"]:
+    select_df.loc[
+        select_df.index.isin(st.session_state["selected_ids"]), "Auswahl"
+    ] = True
 edited_df = st.data_editor(
     select_df,
     use_container_width=True,
@@ -132,7 +148,9 @@ edited_df = st.data_editor(
 
 # Button to refresh selected strains
 selected_ids = edited_df[edited_df["Auswahl"]].index.tolist()
+st.session_state["selected_ids"] = selected_ids
 if st.button("Ausgewählte aktualisieren"):
+    selected_ids = st.session_state["selected_ids"]
     if not selected_ids:
         st.warning("Bitte mindestens eine Sorte auswählen")
     else:
