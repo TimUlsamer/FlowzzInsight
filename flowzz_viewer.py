@@ -113,7 +113,18 @@ if "product_link" in filtered_df.columns:
 
 # Editor mit Auswahlmöglichkeit
 select_df = display_df.set_index("id")
+
+# Maintain checkbox selections across reruns
+if "selected_ids" not in st.session_state:
+    st.session_state["selected_ids"] = []
+
 select_df.insert(0, "Auswahl", False)
+if st.session_state["selected_ids"]:
+    select_df.loc[
+        select_df.index.isin(st.session_state["selected_ids"]),
+        "Auswahl",
+    ] = True
+
 edited_df = st.data_editor(
     select_df,
     use_container_width=True,
@@ -130,8 +141,13 @@ edited_df = st.data_editor(
     ),
 )
 
+# Remember current selection for next run
+st.session_state["selected_ids"] = (
+    edited_df[edited_df["Auswahl"]].index.tolist()
+)
+
 # Button to refresh selected strains
-selected_ids = edited_df[edited_df["Auswahl"]].index.tolist()
+selected_ids = st.session_state["selected_ids"]
 if st.button("Ausgewählte aktualisieren"):
     if not selected_ids:
         st.warning("Bitte mindestens eine Sorte auswählen")
